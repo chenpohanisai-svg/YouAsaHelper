@@ -9,7 +9,7 @@
     <meta name="description" content="這是一個免費的線上麻醉風險評估工具，幫助病人與醫療人員快速了解術前風險與建議，提升手術安全。">
     
     <!-- Open Graph for Facebook / LINE / LinkedIn -->
-    <meta property="og:title" content="麻醉風險評估助手 | 術前安全評估工具">
+    <meta property="og:title" content="麻醉風險評估 | 術前安全評估工具">
     <meta property="og:description" content="免費線上麻醉風險評估工具，幫助病人與醫療人員快速了解術前風險與建議。">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://anesthesia-risk-assessment.vercel.app/">
@@ -20,7 +20,7 @@
     {
       "@context": "https://schema.org",
       "@type": "MedicalRiskCalculator",
-      "name": "麻醉風險評估助手",
+      "name": "麻醉風險評估",
       "description": "免費線上麻醉風險評估工具，幫助病人與醫療人員快速了解術前風險與建議。",
       "url": "https://anesthesia-risk-assessment.vercel.app/",
       "publisher": {
@@ -727,6 +727,15 @@
       const ResultsScreen = ({ results, restart, formData }) => {
         const { overallRisk, riskFactors, asaScore, cardiacRiskPoints, stopBangScore } = results;
         
+        const handlePrint = useCallback(() => {
+          try {
+            window.print();
+          } catch (error) {
+            console.error('列印功能錯誤:', error);
+            alert('列印功能發生錯誤，請嘗試使用瀏覽器選單的列印功能');
+          }
+        }, []);
+        
         const handleShareOrPrint = useCallback(() => {
           const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
           
@@ -738,12 +747,14 @@
               url: window.location.href
             }).catch(err => {
               console.log('分享功能發生錯誤:', err);
-              handlePrint();
+              // 分享失敗就改用提示
+              alert('📱 手機版列印提示：\n\n請點選瀏覽器右上角選單 (...) → 「列印」\n或使用「分享」功能將頁面分享後再列印');
             });
           } else {
+            // 桌面版直接列印
             handlePrint();
           }
-        }, []);
+        }, [handlePrint]);
         
         const handleExportData = useCallback(() => {
           const exportData = {
