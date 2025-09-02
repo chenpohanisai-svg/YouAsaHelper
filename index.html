@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <!-- SEO 基本資訊 -->
+    <title>麻醉風險評估助手 | 術前安全評估工具</title>
+    <meta name="description" content="這是一個免費的線上麻醉風險評估工具，幫助病人與醫療人員快速了解術前風險與建議，提升手術安全。">
+    
+    <!-- Open Graph for Facebook / LINE / LinkedIn -->
+    <meta property="og:title" content="麻醉風險評估助手 | 術前安全評估工具">
+    <meta property="og:description" content="免費線上麻醉風險評估工具，幫助病人與醫療人員快速了解術前風險與建議。">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://anesthesia-risk-assessment.vercel.app/">
+    <meta property="og:image" content="https://anesthesia-risk-assessment.vercel.app/preview.png">
+    
+    <!-- JSON-LD Structured Data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "MedicalRiskCalculator",
+      "name": "麻醉風險評估助手",
+      "description": "免費線上麻醉風險評估工具，幫助病人與醫療人員快速了解術前風險與建議。",
+      "url": "https://anesthesia-risk-assessment.vercel.app/",
+      "publisher": {
+        "@type": "Organization",
+        "name": "Anesthesia Helper"
+      }
+    }
+    </script>
+    
+    <!-- 載入依賴庫 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    
+    <style>
+      body {
+        font-family: 'Noto Sans TC', sans-serif;
+      }
+      
+      /* 列印樣式優化 */
+      @media print {
+        body, html { 
+          background-color: white !important; 
+          -webkit-print-color-adjust: exact;
+          color-adjust: exact;
+        }
+        body * { visibility: hidden; }
+        .print-container, .print-container * { visibility: visible; }
+        .print-container { 
+          position: absolute; 
+          left: 0; 
+          top: 0; 
+          width: 100%; 
+          padding: 2rem; 
+        }
+        .no-print { display: none !important; }
+        .page-break { page-break-before: always; }
+      }
+      
+      /* 焦點樣式增強 */
+      .focus-enhanced:focus {
+        outline: 2px solid #dc2626;
+        outline-offset: 2px;
+      }
+      
+      /* 動畫效果 */
+      .slide-in {
+        animation: slideIn 0.3s ease-out;
+      }
+      
+      @keyframes slideIn {
+        from {
+          opacity: 0;
+          transform: translateX(20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(0);
+        }
+      }
+    </style>
+</head>
+<body class="bg-stone-50">
+    <div id="root"></div>
+    
+    <script type="text/babel">
+      const { useState, useMemo, useCallback, useRef, useEffect } = React;
+      
+      // === 常數定義 ===
+      const CONSTANTS = {
+        TOTAL_STEPS: 4,
+        BMI: {
+          UNDERWEIGHT: 18.5,
+          NORMAL: 25,
+          OVERWEIGHT: 30,
+          OBESE: 40
+        },
+        AGE: {
+          MIN: 1,
+          MAX: 120,
+          ELDERLY: 50
+        },
+        PHYSICAL: {
+          HEIGHT_MIN: 50,
+          HEIGHT_MAX: 250,
+          WEIGHT_MIN: 10,
+          WEIGHT_MAX: 500
+        },
+        SCORES: {
+          STOP_BANG_HIGH_RISK: 3,
+          STOP_BANG_VERY_HIGH_RISK: 5,
+          CARDIAC_HIGH_RISK: 2
+        }
+      };
+      
+      const RISK_LEVELS = {
+        HIGH: 'high',
+        MEDIUM: 'medium',
+        LOW: 'low',
+      };
+      
+      const RISK_COLORS = {
+        [RISK_LEVELS.LOW]: 'bg-emerald-100 text-emerald-800 border-emerald-400',
+        [RISK_LEVELS.MEDIUM]: 'bg-orange-100 text-orange-800 border-orange-400',
+        [RISK_LEVELS.HIGH]: 'bg-red-100 text-red-800 border-red-400',
+      };
+      
+      const RISK_TEXT = {
+        [RISK_LEVELS.LOW]: '較低',
+        [RISK_LEVELS.MEDIUM]: '中度',
+        [RISK_LEVELS.HIGH]: '較高'
+      };
+      
+      const ASA_DESCRIPTIONS = {
+        1: 'ASA 1: 健康的正常人。',
+        2: 'ASA 2: 有輕度全身性疾病，但無功能障礙。',
+        3: 'ASA 3: 有中度至重度的全身性疾病且造成功能障礙。',
+        4: 'ASA 4: 有重度的全身性疾病，對生命造成隨時的威脅。',
+      };
+      
+      // === 工具函式 ===
+      const calculateBMI = (height, weight) => {
+        if (!height || !weight || height <= 0 || weight <= 0) return null;
+        const heightInMeters = height / 100;
+        return (weight / (heightInMeters * heightInMeters)).toFixed(1);
+      };
+      
+      const validateStep1 = (formData) => {
+        const age = parseInt(formData.age);
+        const height = parseInt(formData.height);
+        const weight = parseInt(formData.weight);
+        
+        const errors = {};
+        
+        if (!formData.age || isNaN(age) || age < CONSTANTS.AGE.MIN || age > CONSTANTS.AGE.MAX) {
+          errors.age = `年齡必須在 ${CONSTANTS.AGE.MIN}-${CONSTANTS.AGE.MAX} 歲之間`;
+        }
+        
+        if (!formData.height || isNaN(height) || height < CONSTANTS.PHYSICAL.HEIGHT_MIN || height > CONSTANTS.PHYSICAL.HEIGHT_MAX) {
+          errors.height = `身高必須在 ${CONSTANTS.PHYSICAL.HEIGHT_MIN}-${CONSTANTS.PHYSICAL.HEIGHT_MAX} 公分之間`;
+        }
+        
+        if (!formData.weight || isNaN(weight) || weight < CONSTANTS.PHYSICAL.WEIGHT_MIN || weight > CONSTANTS.PHYSICAL.WEIGHT_MAX) {
+          errors.weight = `體重必須在 ${CONSTANTS.PHYSICAL.WEIGHT_MIN}-${CONSTANTS.PHYSICAL.WEIGHT_MAX} 公斤之間`;
+        }
+        
+        return {
+          isValid: Object.keys(errors).length === 0,
+          errors
+        };
+      };
+      
+      // === 風險計算函式 ===
+      const calculateASAScore = (formData, bmi) => {
+        let asaScore = 1;
+        const bmiValue = parseFloat(bmi);
+        
+        const hasMildDisease = formData.hypertension || 
+                              formData.diabetes || 
+                              (bmiValue >= CONSTANTS.BMI.OBESE && bmiValue < CONSTANTS.BMI.OBESE) || 
+                              formData.smoker !== 'no';
+                              
+        const hasSevereDisease = formData.coronary_artery_disease || 
+                                formData.heart_failure || 
+                                formData.copd || 
+                                formData.renal_disease || 
+                                (bmiValue >= CONSTANTS.BMI.OBESE);
+        
+        if (hasSevereDisease) {
+          asaScore = 3;
+        } else if (hasMildDisease) {
+          asaScore = 2;
+        }
+        
+        if (formData.heart_failure || formData.stroke) {
+          asaScore = Math.max(asaScore, 3);
+        }
+        
+        return asaScore;
+      };
+      
+      const calculateCardiacRisk = (formData) => {
+        let points = 0;
+        if (formData.coronary_artery_disease) points++;
+        if (formData.heart_failure) points++;
+        if (formData.stroke) points++;
+        if (formData.diabetes) points++;
+        if (formData.renal_disease) points++;
+        return points;
+      };
+      
+      const calculateStopBangScore = (formData, bmi) => {
+        let score = 0;
+        const age = parseInt(formData.age);
+        const bmiValue = parseFloat(bmi);
+        
+        if (formData.snoring) score++;
+        if (formData.tired) score++;
+        if (formData.observed_apnea) score++;
+        if (formData.hypertension) score++;
+        if (bmiValue > 35) score++;
+        if (age > CONSTANTS.AGE.ELDERLY) score++;
+        if (formData.gender === 'male') score++;
+        
+        return score;
+      };
+      
+      const analyzeRiskFactors = (formData, bmi, cardiacRiskPoints, stopBangScore) => {
+        const riskFactors = [];
+        const bmiValue = parseFloat(bmi);
+        
+        // 心血管風險因子
+        if (formData.coronary_artery_disease) {
+          riskFactors.push({ text: '冠狀動脈疾病 (心臟風險因子)', level: RISK_LEVELS.HIGH });
+        }
+        if (formData.heart_failure) {
+          riskFactors.push({ text: '心臟衰竭 (心臟風險因子)', level: RISK_LEVELS.HIGH });
+        }
+        if (formData.stroke) {
+          riskFactors.push({ text: '曾有中風病史 (心臟風險因子)', level: RISK_LEVELS.HIGH });
+        }
+        if (formData.diabetes) {
+          riskFactors.push({ text: '糖尿病 (心臟風險因子)', level: RISK_LEVELS.MEDIUM });
+        }
+        if (formData.renal_disease) {
+          riskFactors.push({ text: '慢性腎臟病 (心臟風險因子)', level: RISK_LEVELS.HIGH });
+        }
+        
+        // OSA 風險
+        if (stopBangScore >= CONSTANTS.SCORES.STOP_BANG_HIGH_RISK) {
+          const level = stopBangScore >= CONSTANTS.SCORES.STOP_BANG_VERY_HIGH_RISK ? RISK_LEVELS.HIGH : RISK_LEVELS.HIGH;
+          riskFactors.push({
+            text: `睡眠呼吸中止症 (OSA) 風險較高 (STOP-Bang 分數: ${stopBangScore})`,
+            level
+          });
+        } else if (stopBangScore > 0) {
+          riskFactors.push({
+            text: `有睡眠呼吸中止症 (OSA) 風險因子 (STOP-Bang 分數: ${stopBangScore})`,
+            level: RISK_LEVELS.MEDIUM
+          });
+        }
+        
+        // 其他風險因子
+        if (bmiValue >= CONSTANTS.BMI.OBESE) {
+          riskFactors.push({ text: `肥胖 (BMI: ${bmiValue})`, level: RISK_LEVELS.MEDIUM });
+        }
+        if (formData.smoker !== 'no') {
+          riskFactors.push({ text: '吸菸', level: RISK_LEVELS.MEDIUM });
+        }
+        if (formData.prior_anesthesia_issues) {
+          riskFactors.push({ text: '曾有麻醉相關併發症史', level: RISK_LEVELS.HIGH });
+        }
+        if (formData.allergies) {
+          riskFactors.push({ text: `藥物過敏史: ${formData.allergies}`, level: RISK_LEVELS.HIGH });
+        }
+        if (formData.copd || formData.asthma) {
+          riskFactors.push({ text: '呼吸系統疾病 (氣喘/慢性阻塞性肺病)', level: RISK_LEVELS.MEDIUM });
+        }
+        
+        return riskFactors;
+      };
+      
+      const calculateOverallRisk = (asaScore, cardiacRiskPoints, stopBangScore) => {
+        if (asaScore >= 3 || 
+            cardiacRiskPoints >= CONSTANTS.SCORES.CARDIAC_HIGH_RISK || 
+            stopBangScore >= CONSTANTS.SCORES.STOP_BANG_VERY_HIGH_RISK) {
+          return RISK_LEVELS.HIGH;
+        } else if (asaScore === 2 || 
+                   cardiacRiskPoints === 1 || 
+                   stopBangScore >= CONSTANTS.SCORES.STOP_BANG_HIGH_RISK) {
+          return RISK_LEVELS.MEDIUM;
+        }
+        return RISK_LEVELS.LOW;
+      };
+      
+      // === 圖示元件 ===
+      const CheckCircleIcon = ({ className }) => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+          <polyline points="22 4 12 14.01 9 11.01"/>
+        </svg>
+      );
+      
+      const AlertTriangleIcon = ({ className }) => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+          <path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
+          <line x1="12" x2="12" y1="9" y2="13"/>
+          <line x1="12" x2="12.01" y1="17" y2="17"/>
+        </svg>
+      );
+      
+      const HeartIcon = ({ className }) => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+        </svg>
+      );
+      
+      const LungsIcon = ({ className }) => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+          <path d="M3 12h3a3 3 0 0 1 3 3v5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-5a3 3 0 0 1 3-3h3"/>
+          <path d="M9 10V4.5a2.5 2.5 0 0 1 5 0V10"/>
+          <path d="M9 4h6"/>
+        </svg>
+      );
+      
+      // === 輸入元件 ===
+      const ErrorBoundary = ({ children }) => {
+        const [hasError, setHasError] = useState(false);
+        
+        useEffect(() => {
+          const handleError = () => setHasError(true);
+          window.addEventListener('error', handleError);
+          return () => window.removeEventListener('error', handleError);
+        }, []);
+        
+        if (hasError) {
+          return (
+            <div className="text-center p-8">
+              <AlertTriangleIcon className="mx-auto h-16 w-16 text-red-500 mb-4" />
+              <h2 className="text-xl font-bold text-red-600 mb-2">發生錯誤</h2>
+              <p className="text-gray-600 mb-4">抱歉，應用程式遇到了問題。請重新整理頁面再試一次。</p>
+              <button 
+                onClick={() => window.location.reload()} 
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+              >
+                重新整理頁面
+              </button>
+            </div>
+          );
+        }
+        
+        return children;
+      };
+      
+      const InputField = ({ label, name, type = "text", value, onChange, error, placeholder, min, max, required = false }) => (
+        <div>
+          <label htmlFor={name} className="block text-sm font-normal text-emerald-950 mb-1">
+            {label} {required && <span className="text-red-500">*</span>}
+          </label>
+          <input
+            type={type}
+            name={name}
+            id={name}
+            value={value}
+            onChange={onChange}
+            min={min}
+            max={max}
+            className={`mt-1 block w-full rounded-md shadow-sm sm:text-sm focus-enhanced ${
+              error 
+                ? 'border-red-500 focus:border-red-500 focus:ring-red-500' 
+                : 'border-stone-300 focus:border-red-500 focus:ring-red-500'
+            }`}
+            placeholder={placeholder}
+            aria-describedby={error ? `${name}-error` : undefined}
+            aria-invalid={error ? 'true' : 'false'}
+          />
+          {error && (
+            <p id={`${name}-error`} className="mt-1 text-sm text-red-600" role="alert">
+              {error}
+            </p>
+          )}
+        </div>
+      );
+      
+      const CheckboxInput = ({ id, label, checked, onChange, description }) => (
+        <div className="relative flex items-start">
+          <div className="flex h-5 items-center">
+            <input
+              id={id}
+              name={id}
+              type="checkbox"
+              checked={checked}
+              onChange={onChange}
+              className="h-4 w-4 rounded border-stone-300 text-red-600 focus:ring-red-500 focus-enhanced"
+              aria-describedby={description ? `${id}-description` : undefined}
+            />
+          </div>
+          <div className="ml-3 text-sm">
+            <label htmlFor={id} className="font-normal text-emerald-950 cursor-pointer">
+              {label}
+            </label>
+            {description && (
+              <p id={`${id}-description`} className="font-normal text-emerald-950 text-xs mt-1">
+                {description}
+              </p>
+            )}
+          </div>
+        </div>
+      );
+      
+      // === 步驟元件 ===
+      const Step1 = ({ formData, handleChange, bmi, errors }) => (
+        <div className="slide-in">
+          <h2 className="text-2xl font-bold text-red-600 mb-6">1. 基本資料</h2>
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <InputField
+                label="年齡"
+                name="age"
+                type="number"
+                value={formData.age}
+                onChange={handleChange}
+                error={errors.age}
+                placeholder="例如: 55"
+                min={CONSTANTS.AGE.MIN}
+                max={CONSTANTS.AGE.MAX}
+                required
+              />
+              <div>
+                <label htmlFor="gender" className="block text-sm font-normal text-emerald-950 mb-1">
+                  生理性別 <span className="text-red-500">*</span>
+                </label>
+                <select 
+                  name="gender" 
+                  id="gender" 
+                  value={formData.gender} 
+                  onChange={handleChange} 
+                  className="mt-1 block w-full rounded-md border-stone-300 shadow-sm focus:border-red-500 focus:ring-red-500 sm:text-sm focus-enhanced"
+                >
+                  <option value="male">男</option>
+                  <option value="female">女</option>
+                </select>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <InputField
+                label="身高 (cm)"
+                name="height"
+                type="number"
+                value={formData.height}
+                onChange={handleChange}
+                error={errors.height}
+                placeholder="例如: 170"
+                min={CONSTANTS.PHYSICAL.HEIGHT_MIN}
+                max={CONSTANTS.PHYSICAL.HEIGHT_MAX}
+                required
+              />
+              <InputField
+                label="體重 (kg)"
+                name="weight"
+                type="number"
+                value={formData.weight}
+                onChange={handleChange}
+                error={errors.weight}
+                placeholder="例如: 75"
+                min={CONSTANTS.PHYSICAL.WEIGHT_MIN}
+                max={CONSTANTS.PHYSICAL.WEIGHT_MAX}
+                required
+              />
+            </div>
+            
+            {bmi && (
+              <div className="p-3 bg-red-50 rounded-lg text-center">
+                <p className="font-semibold text-red-800">
+                  您的身體質量指數 (BMI) 為: <span className="text-xl">{bmi}</span>
+                </p>
+                <p className="text-sm text-red-600 mt-1">
+                  {parseFloat(bmi) < CONSTANTS.BMI.UNDERWEIGHT && "體重過輕"}
+                  {parseFloat(bmi) >= CONSTANTS.BMI.UNDERWEIGHT && parseFloat(bmi) < CONSTANTS.BMI.NORMAL && "正常體重"}
+                  {parseFloat(bmi) >= CONSTANTS.BMI.NORMAL && parseFloat(bmi) < CONSTANTS.BMI.OBESE && "過重"}
+                  {parseFloat(bmi) >= CONSTANTS.BMI.OBESE && "肥胖"}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+      
+      const Step2 = ({ formData, handleChange }) => (
+        <div className="slide-in">
+          <h2 className="text-2xl font-bold text-red-600 mb-6">2. 系統性病史</h2>
+          <p className="text-sm font-normal text-emerald-950 mb-6">
+            請勾選所有被醫師診斷過的疾病。若不確定，請諮詢醫師或暫時不勾選。
+          </p>
+          <div className="space-y-6">
+            <fieldset>
+              <legend className="text-lg font-bold text-red-600 flex items-center mb-3">
+                <HeartIcon className="mr-2 text-red-500" />
+                心血管系統
+              </legend>
+              <div className="space-y-4 pl-4 border-l-2 border-stone-200" role="group" aria-labelledby="cardiovascular-group">
+                <CheckboxInput 
+                  id="hypertension" 
+                  label="高血壓 (大於140/90 mmHg)" 
+                  checked={formData.hypertension} 
+                  onChange={handleChange} 
+                />
+                <CheckboxInput 
+                  id="coronary_artery_disease" 
+                  label="冠狀動脈疾病" 
+                  description="例如: 心絞痛、曾心肌梗塞、做過心導管支架"
+                  checked={formData.coronary_artery_disease} 
+                  onChange={handleChange} 
+                />
+                <CheckboxInput 
+                  id="heart_failure" 
+                  label="心臟衰竭" 
+                  description="醫師曾說您的心臟功能較無力、心臟擴大"
+                  checked={formData.heart_failure} 
+                  onChange={handleChange} 
+                />
+                <CheckboxInput 
+                  id="arrhythmia" 
+                  label="心律不整" 
+                  description="例如: 心房顫動"
+                  checked={formData.arrhythmia} 
+                  onChange={handleChange} 
+                />
+                <CheckboxInput 
+                  id="stroke" 
+                  label="中風或短暫性腦缺血 (小中風)" 
+                  checked={formData.stroke} 
+                  onChange={handleChange} 
+                />
+              </div>
+            </fieldset>
+            
+            <fieldset>
+              <legend className="text-lg font-bold text-red-600 flex items-center mb-3">
+                <LungsIcon className="mr-2 text-red-500" />
+                呼吸系統與其他
+              </legend>
+              <div className="space-y-4 pl-4 border-l-2 border-stone-200" role="group" aria-labelledby="respiratory-group">
+                <CheckboxInput id="asthma" label="氣喘" checked={formData.asthma} onChange={handleChange} />
+                <CheckboxInput id="copd" label="慢性阻塞性肺病" checked={formData.copd} onChange={handleChange} />
+                <CheckboxInput id="sleep_apnea" label="睡眠呼吸中止症" checked={formData.sleep_apnea} onChange={handleChange} />
+                <CheckboxInput id="diabetes" label="糖尿病" checked={formData.diabetes} onChange={handleChange} />
+                <CheckboxInput id="renal_disease" label="慢性腎臟病" checked={formData.renal_disease} onChange={handleChange} />
+              </div>
+            </fieldset>
+          </div>
+        </div>
+      );
+      
+      const Step3 = ({ formData, handleChange }) => (
+        <div className="slide-in">
+          <h2 className="text-2xl font-bold text-red-600 mb-6">3. 生活習慣與麻醉史</h2>
+          <div className="space-y-6">
+            <fieldset>
+              <legend className="block text-sm font-normal text-emerald-950 mb-2">吸菸習慣</legend>
+              <div className="flex flex-wrap gap-4 font-normal text-emerald-950" role="radiogroup">
+                <label className="flex items-center cursor-pointer">
+                  <input 
+                    type="radio" 
+                    name="smoker" 
+                    value="no" 
+                    checked={formData.smoker === 'no'} 
+                    onChange={handleChange} 
+                    className="mr-2 text-red-600 focus:ring-red-500 focus-enhanced" 
+                  /> 
+                  無
+                </label>
+                <label className="flex items-center cursor-pointer">
+                  <input 
+                    type="radio" 
+                    name="smoker" 
+                    value="yes" 
+                    checked={formData.smoker === 'yes'} 
+                    onChange={handleChange} 
+                    className="mr-2 text-red-600 focus:ring-red-500 focus-enhanced" 
+                  /> 
+                  是
+                </label>
+                <label className="flex items-center cursor-pointer">
+                  <input 
+                    type="radio" 
+                    name="smoker" 
+                    value="former" 
+                    checked={formData.smoker === 'former'} 
+                    onChange={handleChange} 
+                    className="mr-2 text-red-600 focus:ring-red-500 focus-enhanced" 
+                  /> 
+                  已戒菸
+                </label>
+              </div>
+            </fieldset>
+            
+            <fieldset>
+              <legend className="block text-sm font-normal text-emerald-950 mb-2">飲酒習慣</legend>
+              <div className="flex flex-wrap gap-4 font-normal text-emerald-950" role="radiogroup">
+                <label className="flex items-center cursor-pointer">
+                  <input 
+                    type="radio" 
+                    name="alcohol" 
+                    value="no" 
+                    checked={formData.alcohol === 'no'} 
+                    onChange={handleChange} 
+                    className="mr-2 text-red-600 focus:ring-red-500 focus-enhanced" 
+                  /> 
+                  無或極少
+                </label>
+                <label className="flex items-center cursor-pointer">
+                  <input 
+                    type="radio" 
+                    name="alcohol" 
+                    value="social" 
+                    checked={formData.alcohol === 'social'} 
+                    onChange={handleChange} 
+                    className="mr-2 text-red-600 focus:ring-red-500 focus-enhanced" 
+                  /> 
+                  社交性飲酒
+                </label>
+                <label className="flex items-center cursor-pointer">
+                  <input 
+                    type="radio" 
+                    name="alcohol" 
+                    value="daily" 
+                    checked={formData.alcohol === 'daily'} 
+                    onChange={handleChange} 
+                    className="mr-2 text-red-600 focus:ring-red-500 focus-enhanced" 
+                  /> 
+                  每日飲酒
+                </label>
+              </div>
+            </fieldset>
+            
+            <hr className="border-stone-200"/>
+            
+            <div>
+              <CheckboxInput
+                id="prior_anesthesia_issues"
+                label="過去或家族有麻醉相關併發症史"
+                description="例如: 嚴重術後噁心嘔吐、惡性高熱、甦醒困難"
+                checked={formData.prior_anesthesia_issues}
+                onChange={handleChange}
+              />
+            </div>
+            
+            <div>
+              <label htmlFor="allergies" className="block text-sm font-normal text-emerald-950 mb-1">
+                您是否有任何藥物過敏史？
+              </label>
+              <textarea 
+                name="allergies" 
+                id="allergies" 
+                value={formData.allergies} 
+                onChange={handleChange} 
+                rows="3" 
+                className="mt-1 block w-full rounded-md border-stone-300 shadow-sm focus:border-red-500 focus:ring-red-500 sm:text-sm font-normal text-emerald-950 focus-enhanced" 
+                placeholder="若無請留白。若有，請填寫藥物名稱，例如: 盤尼西林 (Penicillin)"
+                aria-describedby="allergies-help"
+              />
+              <p id="allergies-help" className="mt-1 text-xs text-gray-500">
+                請詳細描述過敏反應，例如：皮疹、呼吸困難等
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+      
+      const Step4 = ({ formData, handleChange }) => (
+        <div className="slide-in">
+          <h2 className="text-2xl font-bold text-red-600 mb-6">4. 睡眠呼吸中止症 (OSA) 風險自評</h2>
+          <p className="text-sm font-normal text-emerald-950 mb-6">
+            這是一份國際通用的 STOP-Bang 問卷，請依據自己真實情況回答。
+          </p>
+          <fieldset className="space-y-4 bg-stone-100 p-4 rounded-lg">
+            <legend className="sr-only">STOP-Bang 問卷</legend>
+            <CheckboxInput 
+              id="snoring" 
+              label="打鼾: 會大聲打鼾嗎？（比說話大聲，或關著房門都聽得到）" 
+              checked={formData.snoring} 
+              onChange={handleChange} 
+            />
+            <CheckboxInput 
+              id="tired" 
+              label="疲倦: 白天是否經常感到疲倦、疲勞或想睡？" 
+              checked={formData.tired} 
+              onChange={handleChange} 
+            />
+            <CheckboxInput 
+              id="observed_apnea" 
+              label="觀察到呼吸中止: 是否有人觀察到在睡眠中停止呼吸？" 
+              checked={formData.observed_apnea} 
+              onChange={handleChange} 
+            />
+            <CheckboxInput 
+              id="hypertension" 
+              label="高血壓: 您目前是否正在為高血壓問題接受治療？" 
+              checked={formData.hypertension} 
+              onChange={handleChange} 
+            />
+          </fieldset>
+        </div>
+      );
+      
+      const ProgressBar = ({ currentStep, totalSteps }) => (
+        <div className="w-full bg-stone-200 rounded-full h-2.5 mb-8" role="progressbar" aria-valuenow={currentStep} aria-valuemin="1" aria-valuemax={totalSteps}>
+          <div 
+            className="bg-red-600 h-2.5 rounded-full transition-all duration-500" 
+            style={{ width: `${(currentStep / totalSteps) * 100}%` }}
+          />
+          <div className="sr-only">進度：第 {currentStep} 步，共 {totalSteps} 步</div>
+        </div>
+      );
+      
+      const ResultsScreen = ({ results, restart, formData }) => {
+        const { overallRisk, riskFactors, asaScore, cardiacRiskPoints, stopBangScore } = results;
+        
+        const handlePrint = useCallback(() => {
+          window.print();
+        }, []);
+        
+        const handleExportData = useCallback(() => {
+          const exportData = {
+            timestamp: new Date().toISOString(),
+            formData,
+            results
+          };
+          
+          const dataStr = JSON.stringify(exportData, null, 2);
+          const dataBlob = new Blob([dataStr], { type: 'application/json' });
+          const url = URL.createObjectURL(dataBlob);
+          
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `anesthesia_risk_assessment_${new Date().toISOString().split('T')[0]}.json`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+        }, [formData, results]);
+        
+        return (
+          <div className="print-container slide-in">
+            <div className="text-center mb-8">
+              <h2 className="text-3xl font-bold text-emerald-950">您的麻醉風險評估報告</h2>
+              <p className="font-normal text-emerald-950 mt-2">這是一份基於您所提供資訊的初步分析</p>
+              <p className="text-xs text-gray-500 mt-1">評估時間：{new Date().toLocaleString('zh-TW')}</p>
+            </div>
+            
+            <div className={`p-6 rounded-lg border-l-4 ${RISK_COLORS[overallRisk]} mb-8`}>
+              <h3 className="text-xl font-bold">綜合風險評估：{RISK_TEXT[overallRisk]}</h3>
+              <p className="mt-2 font-normal">
+                此評估綜合考量了您的年齡、健康狀況與生活習慣。風險等級愈高，代表麻醉過程中需要特別留意的潛在問題愈多，您的麻醉醫師會為此制定更周全的計畫。
+              </p>
+            </div>
+            
+            <div className="mb-8">
+              <h3 className="text-xl font-bold text-red-600 mb-4">主要風險因子摘要</h3>
+              {riskFactors.length > 0 ? (
+                <ul className="space-y-3" role="list">
+                  {riskFactors.map((factor, index) => (
+                    <li key={index} className="flex items-start p-3 bg-stone-100 rounded-md" role="listitem">
+                      <AlertTriangleIcon 
+                        className={`h-5 w-5 mr-3 mt-1 flex-shrink-0 ${
+                          factor.level === RISK_LEVELS.HIGH ? 'text-red-500' : 'text-orange-500'
+                        }`} 
+                      />
+                      <span className="font-normal text-emerald-950">{factor.text}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="flex items-center p-3 bg-emerald-50 rounded-md">
+                  <CheckCircleIcon className="h-5 w-5 mr-3 text-emerald-600 flex-shrink-0" />
+                  <span className="font-normal text-emerald-950">根據您提供的資訊，未發現顯著的麻醉風險因子。</span>
+                </div>
+              )}
+            </div>
+            
+            <div className="mb-8">
+              <h3 className="text-xl font-bold text-red-600 mb-4">你的「安心手術」行動清單 ✅</h3>
+              <div className="bg-emerald-50 p-4 rounded-lg border border-emerald-200 space-y-4 font-normal text-emerald-950">
+                <p><span className="font-bold">1. 存下你的健康檔案 📂</span>：點擊下方按鈕，把這份報告存成 PDF 或匯出資料</p>
+                <p><span className="font-bold">2. 成為醫師的神隊友 🤝</span>：術前諮詢時，用它來幫助你更精準地提問，也讓醫師更快了解你的狀況。</p>
+                <p><span className="font-bold">3. 盤點你的日常用藥 💊</span>：主動和醫師聊聊你正在使用的藥物，特別是抗凝血劑、血糖藥等。確認哪些要繼續、哪些該暫停，是安全的第一步。</p>
+                <p className="font-bold pt-2">了解自己，是最好的健康投資。這份報告就是你的「溝通利器」，幫助你和醫療團隊一起，打造最安心的手術旅程 ✨</p>
+              </div>
+            </div>
+            
+            <div className="bg-stone-100 p-4 rounded-lg mb-8">
+              <h3 className="text-lg font-bold text-red-600 mb-2">詳細評估指標</h3>
+              <div className="space-y-2">
+                <p className="text-sm font-normal text-emerald-950">
+                  <strong>預估 ASA 身體狀況分級:</strong> {asaScore} 級
+                </p>
+                <p className="text-xs font-normal text-emerald-950 mb-2">
+                  {ASA_DESCRIPTIONS[asaScore]}
+                </p>
+                <p className="text-sm font-normal text-emerald-950">
+                  <strong>心血管風險指數 (RCRI) 點數:</strong> {cardiacRiskPoints} 點 
+                  <span className="text-xs">(點數愈高，心臟併發症風險愈高)</span>
+                </p>
+                <p className="text-sm font-normal text-emerald-950">
+                  <strong>睡眠呼吸中止症 (STOP-Bang) 分數:</strong> {stopBangScore} 分 
+                  <span className="text-xs">(3分以上表示風險較高)</span>
+                </p>
+              </div>
+            </div>
+            
+            <div className="mt-10 flex flex-col sm:flex-row justify-center gap-4 no-print">
+              <button
+                onClick={handlePrint}
+                className="w-full sm:w-auto px-8 py-3 bg-red-600 text-white rounded-lg font-semibold text-base hover:bg-red-700 transition-colors focus-enhanced"
+                aria-label="列印或儲存為 PDF"
+              >
+                📄 列印 / 儲存為 PDF
+              </button>
+              <button
+                onClick={handleExportData}
+                className="w-full sm:w-auto px-8 py-3 bg-blue-600 text-white rounded-lg font-semibold text-base hover:bg-blue-700 transition-colors focus-enhanced"
+                aria-label="匯出評估資料"
+              >
+                💾 匯出資料
+              </button>
+              <button
+                onClick={restart}
+                className="w-full sm:w-auto px-8 py-3 bg-slate-500 text-white rounded-lg font-semibold text-base hover:bg-slate-600 transition-colors focus-enhanced"
+                aria-label="重新開始評估"
+              >
+                🔄 重新評估
+              </button>
+            </div>
+          </div>
+        );
+      };
+      
+      // === 主要應用程式元件 ===
+      function App() {
+        const [step, setStep] = useState(1);
+        const [formData, setFormData] = useState({
+          age: '',
+          gender: 'male',
+          height: '',
+          weight: '',
+          hypertension: false,
+          coronary_artery_disease: false,
+          heart_failure: false,
+          arrhythmia: false,
+          stroke: false,
+          asthma: false,
+          copd: false,
+          sleep_apnea: false,
+          diabetes: false,
+          renal_disease: false,
+          smoker: 'no',
+          alcohol: 'no',
+          prior_anesthesia_issues: false,
+          allergies: '',
+          snoring: false,
+          tired: false,
+          observed_apnea: false,
+        });
+        const [errors, setErrors] = useState({});
+        
+        const stepRef = useRef(null);
+        
+        // 焦點管理
+        useEffect(() => {
+          if (stepRef.current) {
+            stepRef.current.focus();
+          }
+        }, [step]);
+        
+        const handleNext = useCallback(() => {
+          if (step === 1) {
+            const validation = validateStep1(formData);
+            if (!validation.isValid) {
+              setErrors(validation.errors);
+              return;
+            }
+            setErrors({});
+          }
+          setStep(s => Math.min(s + 1, CONSTANTS.TOTAL_STEPS + 1));
+        }, [step, formData]);
+        
+        const handleBack = useCallback(() => {
+          setStep(s => Math.max(s - 1, 1));
+          setErrors({});
+        }, []);
+        
+        const restart = useCallback(() => {
+          setStep(1);
+          setFormData({
+            age: '',
+            gender: 'male',
+            height: '',
+            weight: '',
+            hypertension: false,
+            coronary_artery_disease: false,
+            heart_failure: false,
+            arrhythmia: false,
+            stroke: false,
+            asthma: false,
+            copd: false,
+            sleep_apnea: false,
+            diabetes: false,
+            renal_disease: false,
+            smoker: 'no',
+            alcohol: 'no',
+            prior_anesthesia_issues: false,
+            allergies: '',
+            snoring: false,
+            tired: false,
+            observed_apnea: false,
+          });
+          setErrors({});
+        }, []);
+        
+        const handleChange = useCallback((e) => {
+          const { name, value, type, checked } = e.target;
+          setFormData(prev => ({
+            ...prev,
+            [name]: type === 'checkbox' ? checked : value
+          }));
+          
+          // 清除對應欄位的錯誤訊息
+          if (errors[name]) {
+            setErrors(prev => ({
+              ...prev,
+              [name]: undefined
+            }));
+          }
+        }, [errors]);
+        
+        const bmi = useMemo(() => calculateBMI(formData.height, formData.weight), [formData.height, formData.weight]);
+        
+        const analysisResults = useMemo(() => {
+          const asaScore = calculateASAScore(formData, bmi);
+          const cardiacRiskPoints = calculateCardiacRisk(formData);
+          const stopBangScore = calculateStopBangScore(formData, bmi);
+          const riskFactors = analyzeRiskFactors(formData, bmi, cardiacRiskPoints, stopBangScore);
+          const overallRisk = calculateOverallRisk(asaScore, cardiacRiskPoints, stopBangScore);
+          
+          return {
+            asaScore,
+            cardiacRiskPoints,
+            stopBangScore,
+            riskFactors,
+            overallRisk
+          };
+        }, [formData, bmi]);
+        
+        const validation = useMemo(() => validateStep1(formData), [formData]);
+        
+        const renderStep = () => {
+          const stepProps = {
+            formData,
+            handleChange,
+            bmi,
+            errors
+          };
+          
+          switch (step) {
+            case 1:
+              return <Step1 {...stepProps} />;
+            case 2:
+              return <Step2 {...stepProps} />;
+            case 3:
+              return <Step3 {...stepProps} />;
+            case 4:
+              return <Step4 {...stepProps} />;
+            case 5:
+              return <ResultsScreen results={analysisResults} restart={restart} formData={formData} />;
+            default:
+              return (
+                <div className="text-center">
+                  <AlertTriangleIcon className="mx-auto h-16 w-16 text-red-500 mb-4" />
+                  <p className="text-red-600">發生未知錯誤，請重新開始</p>
+                </div>
+              );
+          }
+        };
+        
+        return (
+          <ErrorBoundary>
+            <div className="min-h-screen flex flex-col items-center p-4 sm:p-6 lg:p-8">
+              <div className="w-full max-w-2xl mx-auto">
+                <header className="text-center mb-6">
+                  <h1 className="text-3xl sm:text-4xl font-bold text-emerald-950">
+                    <span className="text-red-600">麻醉風險</span>知多少？一分鐘自我評估
+                  </h1>
+                  <p className="font-normal text-emerald-950 mt-2">
+                    &lt;花幾分鐘了解自己，術前溝通更順利&gt;
+                  </p>
+                </header>
+                
+                <main className="bg-white rounded-xl shadow-lg p-6 sm:p-8">
+                  <div className="bg-orange-100 border-l-4 border-orange-400 p-4 rounded-md mb-8" role="alert">
+                    <div className="flex">
+                      <AlertTriangleIcon className="h-6 w-6 mr-4 text-orange-500 flex-shrink-0" />
+                      <div>
+                        <p className="font-bold text-red-600">重要免責聲明</p>
+                        <p className="text-sm font-normal text-emerald-950">
+                          此工具結果僅供參考，不能取代專業醫療評估。所有麻醉決策請務必與您的麻醉科醫師、外科醫師進行詳細討論。
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {step <= CONSTANTS.TOTAL_STEPS && (
+                    <ProgressBar currentStep={step} totalSteps={CONSTANTS.TOTAL_STEPS} />
+                  )}
+                  
+                  <div ref={stepRef} tabIndex="-1" className="focus:outline-none">
+                    {renderStep()}
+                  </div>
+                  
+                  {step <= CONSTANTS.TOTAL_STEPS && (
+                    <nav className="mt-8 flex justify-between" aria-label="表單導航">
+                      <button 
+                        onClick={handleBack} 
+                        disabled={step === 1}
+                        className="px-6 py-2 bg-stone-200 text-stone-700 rounded-lg font-semibold hover:bg-stone-300 disabled:bg-stone-100 disabled:text-stone-400 disabled:cursor-not-allowed transition-colors focus-enhanced"
+                        aria-label="返回上一步"
+                      >
+                        ← 上一步
+                      </button>
+                      <button 
+                        onClick={handleNext}
+                        disabled={step === 1 && !validation.isValid}
+                        className="px-6 py-2 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 disabled:bg-red-300 disabled:cursor-not-allowed transition-colors focus-enhanced"
+                        aria-label={step === CONSTANTS.TOTAL_STEPS ? '查看評估報告' : '前往下一步'}
+                      >
+                        {step === CONSTANTS.TOTAL_STEPS ? '查看評估報告 →' : '下一步 →'}
+                      </button>
+                    </nav>
+                  )}
+                </main>
+                
+                <footer className="text-center mt-8 text-sm text-emerald-950 font-normal">
+                  <p>&copy; {new Date().getFullYear()} 麻醉風險評估助手. All Rights Reserved to Healthinvestor_</p>
+                </footer>
+              </div>
+            </div>
+          </ErrorBoundary>
+        );
+      }
+      
+      // === 渲染應用程式 ===
+      const container = document.getElementById('root');
+      const root = ReactDOM.createRoot(container);
+      root.render(<App />);
+    </script>
+</body>
+</html>
