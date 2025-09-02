@@ -727,8 +727,22 @@
       const ResultsScreen = ({ results, restart, formData }) => {
         const { overallRisk, riskFactors, asaScore, cardiacRiskPoints, stopBangScore } = results;
         
-        const handlePrint = useCallback(() => {
-          window.print();
+        const handleShareOrPrint = useCallback(() => {
+          const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+          
+          if (isMobile && navigator.share) {
+            // 使用原生分享功能（如果支援）
+            navigator.share({
+              title: '麻醉風險評估報告',
+              text: '我的術前麻醉風險評估結果',
+              url: window.location.href
+            }).catch(err => {
+              console.log('分享功能發生錯誤:', err);
+              handlePrint();
+            });
+          } else {
+            handlePrint();
+          }
         }, []);
         
         const handleExportData = useCallback(() => {
@@ -821,11 +835,11 @@
             
             <div className="mt-10 flex flex-col sm:flex-row justify-center gap-4 no-print">
               <button
-                onClick={handlePrint}
+                onClick={handleShareOrPrint}
                 className="w-full sm:w-auto px-8 py-3 bg-red-600 text-white rounded-lg font-semibold text-base hover:bg-red-700 transition-colors focus-enhanced"
-                aria-label="列印或儲存為 PDF"
+                aria-label="列印、儲存為 PDF 或分享"
               >
-                📄 列印 / 儲存為 PDF
+                📄 列印 / 儲存 PDF / 分享
               </button>
               <button
                 onClick={handleExportData}
